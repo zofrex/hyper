@@ -18,9 +18,11 @@ use self::Error::{
     Version,
     Header,
     Status,
+    Timeout,
     Io,
     Ssl,
     TooLarge,
+    Incomplete,
     Http2,
     Utf8
 };
@@ -42,8 +44,12 @@ pub enum Error {
     Header,
     /// A message head is too large to be reasonable.
     TooLarge,
+    /// A message reached EOF before being a complete message.
+    Incomplete,
     /// An invalid `Status`, such as `1337 ELITE`.
     Status,
+    /// A timeout occurred waiting for an IO event.
+    Timeout,
     /// An `io::Error` that occurred while trying to read or write to a network stream.
     Io(IoError),
     /// An error from a SSL library.
@@ -80,6 +86,8 @@ impl StdError for Error {
             Header => "Invalid Header provided",
             TooLarge => "Message head is too large",
             Status => "Invalid Status provided",
+            Incomplete => "Message is incomplete",
+            Timeout => "Timeout",
             Uri(ref e) => e.description(),
             Io(ref e) => e.description(),
             Ssl(ref e) => e.description(),
