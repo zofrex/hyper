@@ -63,7 +63,7 @@ macro_rules! bench_header(
             use test::Bencher;
             use super::*;
 
-            use header::{Header, HeaderFormatter};
+            use header::{Header};
 
             #[bench]
             fn bench_parse(b: &mut Bencher) {
@@ -208,15 +208,13 @@ macro_rules! header {
             fn parse_header(raw: &[Vec<u8>]) -> $crate::Result<Self> {
                 $crate::header::parsing::from_comma_delimited(raw).map($id)
             }
-        }
-        impl $crate::header::HeaderFormat for $id {
             fn fmt_header(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
                 $crate::header::parsing::fmt_comma_delimited(f, &self.0[..])
             }
         }
         impl ::std::fmt::Display for $id {
             fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-                use $crate::header::HeaderFormat;
+                use $crate::header::Header;
                 self.fmt_header(f)
             }
         }
@@ -236,15 +234,13 @@ macro_rules! header {
             fn parse_header(raw: &[Vec<u8>]) -> $crate::Result<Self> {
                 $crate::header::parsing::from_comma_delimited(raw).map($id)
             }
-        }
-        impl $crate::header::HeaderFormat for $id {
             fn fmt_header(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
                 $crate::header::parsing::fmt_comma_delimited(f, &self.0[..])
             }
         }
         impl ::std::fmt::Display for $id {
             fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-                use $crate::header::HeaderFormat;
+                use $crate::header::Header;
                 self.fmt_header(f)
             }
         }
@@ -263,8 +259,6 @@ macro_rules! header {
             fn parse_header(raw: &[Vec<u8>]) -> $crate::Result<Self> {
                 $crate::header::parsing::from_one_raw_str(raw).map($id)
             }
-        }
-        impl $crate::header::HeaderFormat for $id {
             fn fmt_header(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
                 ::std::fmt::Display::fmt(&**self, f)
             }
@@ -299,8 +293,6 @@ macro_rules! header {
                 }
                 $crate::header::parsing::from_comma_delimited(raw).map($id::Items)
             }
-        }
-        impl $crate::header::HeaderFormat for $id {
             fn fmt_header(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
                 match *self {
                     $id::Any => f.write_str("*"),
@@ -311,7 +303,7 @@ macro_rules! header {
         }
         impl ::std::fmt::Display for $id {
             fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
-                use $crate::header::HeaderFormat;
+                use $crate::header::Header;
                 self.fmt_header(f)
             }
         }

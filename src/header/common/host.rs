@@ -1,4 +1,4 @@
-use header::{Header, HeaderFormat};
+use header::{Header};
 use std::fmt;
 use header::parsing::from_one_raw_str;
 
@@ -86,9 +86,7 @@ impl Header for Host {
             })
         })
     }
-}
 
-impl HeaderFormat for Host {
     fn fmt_header(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.port {
             None | Some(80) | Some(443) => f.write_str(&self.hostname[..]),

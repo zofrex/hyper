@@ -1,5 +1,5 @@
 use std::fmt::{self, Display};
-use header::{self, Header, HeaderFormat, EntityTag, HttpDate};
+use header::{self, Header, EntityTag, HttpDate};
 
 /// `If-Range` header, defined in [RFC7233](http://tools.ietf.org/html/rfc7233#section-3.2)
 ///
@@ -68,9 +68,7 @@ impl Header for IfRange {
         }
         Err(::Error::Header)
     }
-}
 
-impl HeaderFormat for IfRange {
     fn fmt_header(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
         match *self {
             IfRange::EntityTag(ref x) => Display::fmt(x, f),

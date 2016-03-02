@@ -52,7 +52,7 @@ impl<'a> ReplyBuilder<'a> {
         self
     }
 
-    fn header<H: hyper::header::Header + hyper::header::HeaderFormat>(self, header: H) -> Self {
+    fn header<H: hyper::header::Header>(self, header: H) -> Self {
         let mut headers = hyper::Headers::new();
         headers.set(header);
         self.tx.send(Reply::Headers(headers)).unwrap();
