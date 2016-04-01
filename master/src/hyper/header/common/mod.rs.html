@@ -456,6 +456,10 @@
 <span id="413">413</span>
 <span id="414">414</span>
 <span id="415">415</span>
+<span id="416">416</span>
+<span id="417">417</span>
+<span id="418">418</span>
+<span id="419">419</span>
 </pre><pre class='rust '>
 <span class='doccomment'>//! A Collection of Header implementations for common HTTP Headers.</span>
 <span class='doccomment'>//!</span>
@@ -503,6 +507,8 @@
 <span class='kw'>pub</span> <span class='kw'>use</span> <span class='self'>self</span>::<span class='ident'>last_modified</span>::<span class='ident'>LastModified</span>;
 <span class='kw'>pub</span> <span class='kw'>use</span> <span class='self'>self</span>::<span class='ident'>location</span>::<span class='ident'>Location</span>;
 <span class='kw'>pub</span> <span class='kw'>use</span> <span class='self'>self</span>::<span class='ident'>pragma</span>::<span class='ident'>Pragma</span>;
+<span class='kw'>pub</span> <span class='kw'>use</span> <span class='self'>self</span>::<span class='ident'>prefer</span>::{<span class='ident'>Prefer</span>, <span class='ident'>Preference</span>};
+<span class='kw'>pub</span> <span class='kw'>use</span> <span class='self'>self</span>::<span class='ident'>preference_applied</span>::<span class='ident'>PreferenceApplied</span>;
 <span class='kw'>pub</span> <span class='kw'>use</span> <span class='self'>self</span>::<span class='ident'>range</span>::{<span class='ident'>Range</span>, <span class='ident'>ByteRangeSpec</span>};
 <span class='kw'>pub</span> <span class='kw'>use</span> <span class='self'>self</span>::<span class='ident'>referer</span>::<span class='ident'>Referer</span>;
 <span class='kw'>pub</span> <span class='kw'>use</span> <span class='self'>self</span>::<span class='ident'>server</span>::<span class='ident'>Server</span>;
@@ -863,6 +869,8 @@
 <span class='kw'>mod</span> <span class='ident'>last_modified</span>;
 <span class='kw'>mod</span> <span class='ident'>location</span>;
 <span class='kw'>mod</span> <span class='ident'>pragma</span>;
+<span class='kw'>mod</span> <span class='ident'>prefer</span>;
+<span class='kw'>mod</span> <span class='ident'>preference_applied</span>;
 <span class='kw'>mod</span> <span class='ident'>range</span>;
 <span class='kw'>mod</span> <span class='ident'>referer</span>;
 <span class='kw'>mod</span> <span class='ident'>server</span>;
