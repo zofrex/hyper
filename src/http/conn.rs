@@ -3,12 +3,12 @@ use std::fmt;
 use std::io;
 use std::marker::PhantomData;
 use std::mem;
-use std::sync::mpsc;
 use std::time::Duration;
 
-use rotor::{EventSet, PollOpt, Scope};
+use rotor::{self, EventSet, PollOpt, Scope};
 
 use http::{self, h1, Http1Message, Encoder, Decoder, Next, Next_, Reg, Control};
+use http::channel;
 use http::internal::WriteBuf;
 use http::buffer::Buffer;
 use net::Transport;
@@ -27,7 +27,7 @@ pub struct Conn<T: Transport, H: MessageHandler<T>> {
     buf: Buffer,
     state: State<H, T>,
     transport: T,
-    ctrl: (mpsc::Sender<Next>, mpsc::Receiver<Next>),
+    ctrl: (channel::Sender<Next>, channel::Receiver<Next>),
 }
 
 impl<T: Transport, H: MessageHandler<T>> fmt::Debug for Conn<T, H> {
@@ -40,12 +40,12 @@ impl<T: Transport, H: MessageHandler<T>> fmt::Debug for Conn<T, H> {
 }
 
 impl<T: Transport, H: MessageHandler<T>> Conn<T, H> {
-    pub fn new(transport: T) -> Conn<T, H> {
+    pub fn new(transport: T, notify: rotor::Notifier) -> Conn<T, H> {
         Conn {
             buf: Buffer::new(),
             state: State::Init,
             transport: transport,
-            ctrl: mpsc::channel(),
+            ctrl: channel::new(notify),
         }
     }
 
@@ -137,9 +137,7 @@ impl<T: Transport, H: MessageHandler<T>> Conn<T, H> {
                     Ok(decoder) => {
                         trace!("decoder = {:?}", decoder);
                         let keep_alive = head.should_keep_alive();
-                        let notify = scope.notifier();
                         let mut handler = scope.create(Control {
-                            notify: notify,
                             tx: self.ctrl.0.clone(),
                         });
                         let next = handler.on_incoming(head);
@@ -280,9 +278,7 @@ impl<T: Transport, H: MessageHandler<T>> Conn<T, H> {
                 // this could be a Client request, which writes first, so pay
                 // attention to the version written here, which will adjust
                 // our internal state to Http1 or Http2
-                let notify = scope.notifier();
                 let mut handler = scope.create(Control {
-                    notify: notify,
                     tx: self.ctrl.0.clone(),
                 });
                 let mut head = http::MessageHead::default();
@@ -462,19 +458,16 @@ impl<T: Transport, H: MessageHandler<T>> Conn<T, H> {
 
     pub fn wakeup<F>(mut self, scope: &mut Scope<F>) -> Option<(Self, Option<Duration>)>
     where F: MessageHandlerFactory<T, Output=H> {
-        match self.ctrl.1.try_recv() {
-            Ok(next) => {
-                trace!("woke up with {:?}", next);
-                self.state.update(next);
-                self.ready(EventSet::readable() | EventSet::writable(), scope)
-            },
-            Err(mpsc::TryRecvError::Empty) => {
-                // spurious wakeup
-                let timeout = self.state.timeout();
-                Some((self, timeout))
-            },
-            Err(mpsc::TryRecvError::Disconnected) => unreachable!()
+        loop {
+            match self.ctrl.1.try_recv() {
+                Ok(next) => {
+                    trace!("woke up with {:?}", next);
+                    self.state.update(next);
+                },
+                Err(_) => break
+            }
         }
+        self.ready(EventSet::readable() | EventSet::writable(), scope)
     }
 
     pub fn timeout<F>(mut self, scope: &mut Scope<F>) -> Option<(Self, Option<Duration>)>

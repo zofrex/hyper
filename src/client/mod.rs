@@ -29,13 +29,13 @@ mod response;
 /// Clients can handle things such as: redirect policy, connection pooling.
 pub struct Client<H> {
     //handle: Option<thread::JoinHandle<()>>,
-    notifier: (rotor::Notifier, mpsc::Sender<Notify<H>>),
+    tx: http::channel::Sender<Notify<H>>,
 }
 
 impl<H> Clone for Client<H> {
     fn clone(&self) -> Client<H> {
         Client {
-            notifier: self.notifier.clone()
+            tx: self.tx.clone()
         }
     }
 }
@@ -53,7 +53,7 @@ impl<H: Handler<<DefaultConnector as Connect>::Output>> Client<H> {
     }
 }
 
-impl<H> Client<H> {
+impl<H: Send> Client<H> {
     /// Create a new client with a specific connector.
     pub fn with_connector<T, C>(connector: C) -> ::Result<Client<H>>
     where H: Handler<T>,
@@ -61,12 +61,12 @@ impl<H> Client<H> {
           C: Connect<Output=T> + Send + 'static {
           //C::Output: Transport + Send + 'static {
         let mut loop_ = try!(rotor::Loop::new(&rotor::Config::new()));
-        let (tx, rx) = mpsc::channel();
         let mut notifier = None;
         {
             let not = &mut notifier;
             loop_.add_machine_with(move |scope| {
-                *not = Some(scope.notifier());
+                let (tx, rx) = http::channel::new(scope.notifier());
+                *not = Some(tx);
                 rotor::Response::ok(ClientFsm::Connector(connector, rx))
             }).unwrap();
         }
@@ -81,24 +81,55 @@ impl<H> Client<H> {
 
         Ok(Client {
             //handle: Some(handle),
-            notifier: (notifier, tx),
+            tx: notifier,
         })
     }
 
     /// Build a new request using this Client.
-    pub fn request(&self, url: Url, handler: H) {
-        self.notifier.1.send(Notify::Connect(url, handler))
-            .expect("event loop has panicked");
-        self.notifier.0.wakeup()
-            .expect("event loop notify queue is full, cannot recover");
+    ///
+    /// ## Error
+    ///
+    /// If the event loop thread has died, or the queue is full, a `ClientError`
+    /// will be returned.
+    pub fn request(&self, url: Url, handler: H) -> Result<(), ClientError<H>> {
+        self.tx.send(Notify::Connect(url, handler)).map_err(|e| {
+            match e.0 {
+                Some(Notify::Connect(url, handler)) => ClientError(Some((url, handler))),
+                _ => ClientError(None)
+            }
+        })
     }
 
     /// Close the Client loop.
     pub fn close(self) {
         // Most errors mean that the Receivers are already dead, which would
         // imply the EventLoop panicked.
-        let _ = self.notifier.1.send(Notify::Shutdown);
-        let _ = self.notifier.0.wakeup();
+        let _ = self.tx.send(Notify::Shutdown);
+    }
+}
+
+
+/// An error that can occur when trying to queue a request.
+#[derive(Debug)]
+pub struct ClientError<H>(Option<(Url, H)>);
+
+impl<H> ClientError<H> {
+    /// If the event loop was down, the `Url` and `Handler` can be recovered
+    /// from this method.
+    pub fn recover(self) -> Option<(Url, H)> {
+        self.0
+    }
+}
+
+impl<H: fmt::Debug + ::std::any::Any> ::std::error::Error for ClientError<H> {
+    fn description(&self) -> &str {
+        "Cannot queue request"
+    }
+}
+
+impl<H> fmt::Display for ClientError<H> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str("Cannot queue request")
     }
 }
 
@@ -211,7 +242,7 @@ enum ClientFsm<C, H>
 where C: Connect,
       C::Output: Transport,
       H: Handler<C::Output> {
-    Connector(C, mpsc::Receiver<Notify<H>>),
+    Connector(C, http::channel::Receiver<Notify<H>>),
     Socket(http::Conn<C::Output, Message<H, C::Output>>)
 }
 
@@ -224,7 +255,7 @@ where C: Connect,
 
     fn create(seed: Self::Seed, scope: &mut Scope<Self::Context>) -> rotor::Response<Self, rotor::Void> {
         rotor_try!(scope.register(&seed, EventSet::writable(), PollOpt::level()));
-        rotor::Response::ok(ClientFsm::Socket(http::Conn::new(seed)))
+        rotor::Response::ok(ClientFsm::Socket(http::Conn::new(seed, scope.notifier())))
     }
 
     fn ready(self, events: EventSet, scope: &mut Scope<Self::Context>) -> rotor::Response<Self, Self::Seed> {
@@ -245,8 +276,11 @@ where C: Connect,
         }
     }
 
-    fn spawned(self, _: &mut Scope<Self::Context>) -> rotor::Response<Self, Self::Seed> {
-        rotor::Response::ok(self)
+    fn spawned(self, scope: &mut Scope<Self::Context>) -> rotor::Response<Self, Self::Seed> {
+        match self {
+            ClientFsm::Connector(..) => self.connect(scope),
+            other => rotor::Response::ok(other)
+        }
     }
 
     fn timeout(self, scope: &mut Scope<Self::Context>) -> rotor::Response<Self, Self::Seed> {
@@ -267,43 +301,8 @@ where C: Connect,
 
     fn wakeup(self, scope: &mut Scope<Self::Context>) -> rotor::Response<Self, Self::Seed> {
         match self {
-            ClientFsm::Connector(connector, rx) => {
-                match rx.try_recv() {
-                    Ok(Notify::Connect(url, mut handler)) => {
-                        // TODO: check pool for sockets to this domain
-                        let (host, port) = match get_host_and_port(&url) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                let _todo = handler.on_error(e.into());
-                                return rotor::Response::ok(ClientFsm::Connector(connector, rx));
-                            }
-                        };
-                        let socket = match connector.connect(&host, port, &url.scheme) {
-                            Ok(v) => v,
-                            Err(e) => {
-                                let _todo = handler.on_error(e.into());
-                                return rotor::Response::ok(ClientFsm::Connector(connector, rx));
-                            }
-                        };
-                        scope.queue.push((UrlParts {
-                            host: host,
-                            port: port,
-                            path: RequestUri::AbsolutePath(url.serialize_path().unwrap())
-                        }, handler));
-                        rotor::Response::spawn(ClientFsm::Connector(connector, rx), socket)
-                    }
-                    Ok(Notify::Shutdown) => {
-                        scope.shutdown_loop();
-                        rotor::Response::done()
-                    },
-                    Err(mpsc::TryRecvError::Disconnected) => {
-                        unimplemented!("Connector notifier disconnected");
-                    }
-                    Err(mpsc::TryRecvError::Empty) => {
-                        // spurious wakeup
-                        rotor::Response::ok(ClientFsm::Connector(connector, rx))
-                    }
-                }
+            ClientFsm::Connector(..) => {
+                self.connect(scope)
             },
             ClientFsm::Socket(conn) => match conn.wakeup(scope) {
                 Some((conn, None)) => rotor::Response::ok(ClientFsm::Socket(conn)),
@@ -313,6 +312,55 @@ where C: Connect,
                 }
                 None => rotor::Response::done()
             }
+        }
+    }
+}
+
+impl<C, H> ClientFsm<C, H>
+where C: Connect,
+      C::Output: Transport,
+      H: Handler<C::Output> {
+    fn connect(self, scope: &mut rotor::Scope<<Self as rotor::Machine>::Context>) -> rotor::Response<Self, <Self as rotor::Machine>::Seed> {
+        match self {
+            ClientFsm::Connector(connector, rx) => loop {
+                match rx.try_recv() {
+                    Ok(Notify::Connect(url, mut handler)) => {
+                        // TODO: check pool for sockets to this domain
+                        let (host, port) = match get_host_and_port(&url) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let _todo = handler.on_error(e.into());
+                                continue;
+                            }
+                        };
+                        let socket = match connector.connect(&host, port, &url.scheme) {
+                            Ok(v) => v,
+                            Err(e) => {
+                                let _todo = handler.on_error(e.into());
+                                continue;
+                            }
+                        };
+                        scope.queue.push((UrlParts {
+                            host: host,
+                            port: port,
+                            path: RequestUri::AbsolutePath(url.serialize_path().unwrap())
+                        }, handler));
+                        return rotor::Response::spawn(ClientFsm::Connector(connector, rx), socket)
+                    }
+                    Ok(Notify::Shutdown) => {
+                        scope.shutdown_loop();
+                        return rotor::Response::done()
+                    },
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        unimplemented!("Connector notifier disconnected");
+                    }
+                    Err(mpsc::TryRecvError::Empty) => {
+                        // spurious wakeup
+                        return rotor::Response::ok(ClientFsm::Connector(connector, rx))
+                    }
+                }
+            },
+            other => rotor::Response::ok(other)
         }
     }
 }

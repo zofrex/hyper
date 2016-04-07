@@ -2,7 +2,6 @@
 use std::borrow::Cow;
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::sync::mpsc;
 use std::time::Duration;
 
 use header::Connection;
@@ -15,13 +14,13 @@ use uri::RequestUri;
 use version::HttpVersion;
 use version::HttpVersion::{Http10, Http11};
 
-use rotor;
 #[cfg(feature = "serde-serialization")]
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use self::conn::{Conn, MessageHandler, MessageHandlerFactory};
 
 mod buffer;
+pub mod channel;
 mod conn;
 mod h1;
 //mod h2;
@@ -285,27 +284,33 @@ enum Reg {
     Remove
 }
 
-/// dox
+/// A notifier to wakeup a socket after having used `Next::wait()`
+#[derive(Debug)]
 pub struct Control {
-    notify: rotor::Notifier,
-    tx: mpsc::Sender<Next>,
+    tx: self::channel::Sender<Next>,
 }
-
-impl fmt::Debug for Control {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("Control")
-            .field("notify", &self.notify)
-            .finish()
-    }
-}
-
 
 impl Control {
     /// Wakeup a waiting socket to listen for a certain event.
-    pub fn ready(&self, next: Next) {
+    pub fn ready(&self, next: Next) -> Result<(), ControlError> {
         //TODO: assert!( next.interest != Next_::Wait ) ?
-        self.tx.send(next).unwrap();
-        self.notify.wakeup().unwrap();
+        self.tx.send(next).map_err(|_| ControlError(()))
+    }
+}
+
+/// An error occured trying to tell a Control it is ready.
+#[derive(Debug)]
+pub struct ControlError(());
+
+impl ::std::error::Error for ControlError {
+    fn description(&self) -> &str {
+        "Cannot wakeup event loop: loop is closed"
+    }
+}
+
+impl fmt::Display for ControlError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.write_str(::std::error::Error::description(self))
     }
 }
 

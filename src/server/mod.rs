@@ -118,7 +118,7 @@ where A: TryAccept + rotor::Evented,
 
     fn create(seed: Self::Seed, scope: &mut Scope<F>) -> rotor::Response<Self, rotor::Void> {
         rotor_try!(scope.register(&seed, EventSet::readable(), PollOpt::level()));
-        rotor::Response::ok(ServerFsm::Conn(http::Conn::new(seed)))
+        rotor::Response::ok(ServerFsm::Conn(http::Conn::new(seed, scope.notifier())))
     }
 
     fn ready(self, events: EventSet, scope: &mut Scope<F>) -> rotor::Response<Self, Self::Seed> {
