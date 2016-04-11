@@ -26,7 +26,7 @@ pub struct Sender<T> {
 impl<T: Send> Sender<T> {
     pub fn send(&self, val: T) -> Result<(), SendError<T>> {
         try!(self.tx.send(val));
-        if self.awake.swap(true, Ordering::SeqCst) {
+        if !self.awake.swap(true, Ordering::SeqCst) {
             try!(self.notify.wakeup());
         }
         Ok(())
