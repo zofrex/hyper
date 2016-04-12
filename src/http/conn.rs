@@ -25,9 +25,10 @@ const MAX_BUFFER_SIZE: usize = 8192 + 4096 * 100;
 /// connection can be kept alive after the message, or if it is complete.
 pub struct Conn<T: Transport, H: MessageHandler<T>> {
     buf: Buffer,
+    keep_alive_enabled: bool,
+    ctrl: (channel::Sender<Next>, channel::Receiver<Next>),
     state: State<H, T>,
     transport: T,
-    ctrl: (channel::Sender<Next>, channel::Receiver<Next>),
 }
 
 impl<T: Transport, H: MessageHandler<T>> fmt::Debug for Conn<T, H> {
@@ -43,10 +44,16 @@ impl<T: Transport, H: MessageHandler<T>> Conn<T, H> {
     pub fn new(transport: T, notify: rotor::Notifier) -> Conn<T, H> {
         Conn {
             buf: Buffer::new(),
+            keep_alive_enabled: true,
             state: State::Init,
             transport: transport,
             ctrl: channel::new(notify),
         }
+    }
+
+    pub fn keep_alive(mut self, val: bool) -> Conn<T, H> {
+        self.keep_alive_enabled = val;
+        self
     }
 
     fn interest(&mut self) -> Reg {
@@ -136,7 +143,7 @@ impl<T: Transport, H: MessageHandler<T>> Conn<T, H> {
                 match <<H as MessageHandler<T>>::Message as Http1Message>::decoder(&head) {
                     Ok(decoder) => {
                         trace!("decoder = {:?}", decoder);
-                        let keep_alive = head.should_keep_alive();
+                        let keep_alive = self.keep_alive_enabled && head.should_keep_alive();
                         let mut handler = scope.create(Control {
                             tx: self.ctrl.0.clone(),
                         });
@@ -285,7 +292,7 @@ impl<T: Transport, H: MessageHandler<T>> Conn<T, H> {
                 let interest = handler.on_outgoing(&mut head);
                 if head.version == HttpVersion::Http11 {
                     let mut buf = Vec::new();
-                    let keep_alive = head.should_keep_alive();
+                    let keep_alive = self.keep_alive_enabled && head.should_keep_alive();
                     let mut encoder = <<H as MessageHandler<T>>::Message as Http1Message>::encode(head, &mut buf);
                     let writing = match interest.interest {
                         // user wants to write some data right away

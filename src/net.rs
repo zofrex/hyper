@@ -28,7 +28,7 @@ impl Transport for HttpStream {
     }
 }
 
-/// A connector creates a Transport.
+/// A connector creates a Transport to a remote address..
 pub trait Connect {
     /// Type of Transport to create
     type Output: Transport;
@@ -36,21 +36,34 @@ pub trait Connect {
     fn connect(&self, host: &str, port: u16, scheme: &str) -> ::Result<Self::Output>;
 }
 
+/// Accepts sockets asynchronously.
+pub trait Accept: Evented {
+    /// The transport type that is accepted.
+    type Output: Transport;
+    /// Accept a socket from the listener, if it doesn not block.
+    fn accept(&self) -> io::Result<Option<Self::Output>>;
+    /// Return the local `SocketAddr` of this listener.
+    fn local_addr(&self) -> io::Result<SocketAddr>;
+}
+
 /// An alias to `mio::tcp::TcpStream`.
 #[derive(Debug)]
 pub struct HttpStream(pub TcpStream);
 
 impl Read for HttpStream {
+    #[inline]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.0.read(buf)
     }
 }
 
 impl Write for HttpStream {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
     }
 
+    #[inline]
     fn flush(&mut self) -> io::Result<()> {
         self.0.flush()
     }
@@ -74,6 +87,7 @@ impl Evented for HttpStream {
 }
 
 impl ::vecio::Writev for HttpStream {
+    #[inline]
     fn writev(&mut self, bufs: &[&[u8]]) -> io::Result<usize> {
         use ::vecio::Rawv;
         self.0.writev(bufs)
@@ -85,12 +99,17 @@ impl ::vecio::Writev for HttpStream {
 pub struct HttpListener(pub TcpListener);
 
 
-impl TryAccept for HttpListener {
+impl Accept for HttpListener {
     type Output = HttpStream;
 
     #[inline]
     fn accept(&self) -> io::Result<Option<HttpStream>> {
         TryAccept::accept(&self.0).map(|ok| ok.map(HttpStream))
+    }
+
+    #[inline]
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.0.local_addr()
     }
 }
 
@@ -114,16 +133,17 @@ impl Evented for HttpListener {
 
 /// A connector that will produce HttpStreams.
 #[derive(Debug, Clone, Default)]
-pub struct HttpConnector;
+pub struct HttpConnector(());
 
 impl Connect for HttpConnector {
     type Output = HttpStream;
 
+    #[inline]
     fn connect(&self, host: &str, port: u16, scheme: &str) -> ::Result<HttpStream> {
-        let addr = (host, port).to_socket_addrs().unwrap().next().unwrap();
         Ok(try!(match scheme {
             "http" => {
                 debug!("http scheme");
+                let addr = (host, port).to_socket_addrs().unwrap().next().unwrap();
                 Ok(HttpStream(try!(TcpStream::connect(&addr))))
             },
             _ => {
@@ -211,6 +231,7 @@ impl<S: Transport> Write for HttpsStream<S> {
 }
 
 impl<S: Transport> ::vecio::Writev for HttpsStream<S> {
+    #[inline]
     fn writev(&mut self, bufs: &[&[u8]]) -> io::Result<usize> {
         match *self {
             HttpsStream::Http(ref mut s) => s.writev(bufs),
@@ -222,6 +243,7 @@ impl<S: Transport> ::vecio::Writev for HttpsStream<S> {
 
 #[cfg(unix)]
 impl ::std::os::unix::io::AsRawFd for HttpStream {
+    #[inline]
     fn as_raw_fd(&self) -> ::std::os::unix::io::RawFd {
         self.0.as_raw_fd()
     }
@@ -229,6 +251,7 @@ impl ::std::os::unix::io::AsRawFd for HttpStream {
 
 #[cfg(unix)]
 impl<S: Transport + ::std::os::unix::io::AsRawFd> ::std::os::unix::io::AsRawFd for HttpsStream<S> {
+    #[inline]
     fn as_raw_fd(&self) -> ::std::os::unix::io::RawFd {
         match *self {
             HttpsStream::Http(ref s) => s.as_raw_fd(),
@@ -264,6 +287,7 @@ impl<S: Transport> Evented for HttpsStream<S> {
 }
 
 impl<S: Transport> Transport for HttpsStream<S> {
+    #[inline]
     fn take_socket_error(&mut self) -> io::Result<()> {
         match *self {
             HttpsStream::Http(ref mut s) => s.take_socket_error(),
@@ -298,7 +322,7 @@ impl<S: Ssl> HttpsListener<S> {
     }
 }
 
-impl<S: Ssl> TryAccept for HttpsListener<S> {
+impl<S: Ssl> Accept for HttpsListener<S> {
     type Output = S::Stream;
 
     #[inline]
@@ -313,6 +337,11 @@ impl<S: Ssl> TryAccept for HttpsListener<S> {
             }),
             None => Ok(None),
         })
+    }
+
+    #[inline]
+    fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.listener.local_addr()
     }
 }
 
@@ -357,10 +386,10 @@ impl<S: Ssl> Connect for HttpsConnector<S> {
     fn connect(&self, host: &str, port: u16, scheme: &str) -> ::Result<Self::Output> {
         if scheme == "https" {
             debug!("https scheme");
-            let stream = try!(HttpConnector.connect(host, port, "http"));
+            let stream = try!(HttpConnector(()).connect(host, port, "http"));
             self.ssl.wrap_client(stream, host).map(HttpsStream::Https)
         } else {
-            HttpConnector.connect(host, port, scheme).map(HttpsStream::Http)
+            HttpConnector(()).connect(host, port, scheme).map(HttpsStream::Http)
         }
     }
 }
@@ -382,7 +411,7 @@ mod openssl {
     use std::io::{self, Read, Write};
     use std::path::Path;
 
-    use mio::{Selector, Token, Evented, EventSet, PollOpt, TryAccept};
+    use mio::{Selector, Token, Evented, EventSet, PollOpt};
 
     use openssl::ssl::{Ssl, SslContext, SslStream, SslMethod, SSL_VERIFY_NONE};
     use openssl::ssl::error::StreamError as SslIoError;

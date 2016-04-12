@@ -1,3 +1,4 @@
+#![deny(warnings)]
 extern crate hyper;
 
 use std::io::{self, Read, Write};
@@ -8,12 +9,13 @@ use std::time::Duration;
 use hyper::client::{Handler, Request, Response};
 use hyper::header;
 use hyper::{Method, StatusCode, Next, Encoder, Decoder};
-use hyper::net::HttpStream;
+use hyper::net::DefaultTransport as HttpStream;
 
 fn s(bytes: &[u8]) -> &str {
     ::std::str::from_utf8(bytes.as_ref()).unwrap()
 }
 
+#[derive(Debug)]
 struct TestHandler {
     method: Method,
     tx: mpsc::Sender<Msg>
@@ -90,7 +92,7 @@ impl Client {
     where U: AsRef<str> {
         let (handler, rx) = TestHandler::new(method);
         self.client.as_ref().unwrap()
-            .request(url.as_ref().parse().unwrap(), handler);
+            .request(url.as_ref().parse().unwrap(), handler).unwrap();
         rx
     }
 }

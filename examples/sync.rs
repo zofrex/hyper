@@ -33,7 +33,7 @@ impl<'a> Request<'a> {
 impl<'a> io::Read for Request<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.tx.send(Action::Read(buf.as_mut_ptr(), buf.len())).unwrap();
-        self.ctrl.ready(hyper::Next::read());
+        self.ctrl.ready(hyper::Next::read()).unwrap();
         self.rx.recv().unwrap()
     }
 }
@@ -66,7 +66,7 @@ impl<'a> Response<'a, Fresh> {
 
     pub fn start(self) -> io::Result<Response<'a, Streaming>> {
         self.tx.send(Action::Respond(self.version.clone(), self.status.clone(), self.headers.clone())).unwrap();
-        self.ctrl.ready(hyper::Next::write());
+        self.ctrl.ready(hyper::Next::write()).unwrap();
         let res = self.rx.recv().unwrap();
         res.map(move |_| Response {
             status: self.status,
@@ -88,7 +88,7 @@ impl<'a> Response<'a, Fresh> {
 impl<'a> Write for Response<'a, Streaming> {
     fn write(&mut self, msg: &[u8]) -> io::Result<usize> {
         self.tx.send(Action::Write(msg.as_ptr(), msg.len())).unwrap();
-        self.ctrl.ready(hyper::Next::write());
+        self.ctrl.ready(hyper::Next::write()).unwrap();
         let res = self.rx.recv().unwrap();
         res
     }

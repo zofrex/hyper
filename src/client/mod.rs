@@ -1,4 +1,7 @@
 //! HTTP Client
+//!
+//! The HTTP `Client` uses asynchronous IO, and utilizes the `Handler` trait
+//! to convey when IO events are available for a given request.
 use std::default::Default;
 use std::fmt;
 use std::io::{Read};
@@ -24,9 +27,7 @@ pub use self::response::Response;
 mod request;
 mod response;
 
-/// A Client to use additional features with Requests.
-///
-/// Clients can handle things such as: redirect policy, connection pooling.
+/// A Client to make outgoing HTTP requests.
 pub struct Client<H> {
     //handle: Option<thread::JoinHandle<()>>,
     tx: http::channel::Sender<Notify<H>>,
@@ -46,28 +47,50 @@ impl<H> fmt::Debug for Client<H> {
     }
 }
 
+impl<H> Client<H> {
+    /// Configure a Client.
+    ///
+    /// # Example
+    ///
+    /// ```dont_run
+    /// # use hyper::Client;
+    /// let client = Client::configure()
+    ///     .keep_alive(true)
+    ///     .max_sockets(60_000)
+    ///     .build().unwrap();
+    /// ```
+    #[inline]
+    pub fn configure() -> Config<DefaultConnector> {
+        Config::default()
+    }
+}
+
 impl<H: Handler<<DefaultConnector as Connect>::Output>> Client<H> {
-    /// Create a new Client.
+    /// Create a new Client with the default config.
+    #[inline]
     pub fn new() -> ::Result<Client<H>> {
-        Client::with_connector(DefaultConnector::default())
+        Client::<H>::configure().build()
     }
 }
 
 impl<H: Send> Client<H> {
     /// Create a new client with a specific connector.
-    pub fn with_connector<T, C>(connector: C) -> ::Result<Client<H>>
+    fn configured<T, C>(config: Config<C>) -> ::Result<Client<H>>
     where H: Handler<T>,
           T: Transport + Send,
           C: Connect<Output=T> + Send + 'static {
-          //C::Output: Transport + Send + 'static {
-        let mut loop_ = try!(rotor::Loop::new(&rotor::Config::new()));
+        let mut rotor_config = rotor::Config::new();
+        rotor_config.slab_capacity(config.max_sockets);
+        rotor_config.mio().notify_capacity(config.max_sockets);
+        let keep_alive = config.keep_alive;
+        let mut loop_ = try!(rotor::Loop::new(&rotor_config));
         let mut notifier = None;
         {
             let not = &mut notifier;
             loop_.add_machine_with(move |scope| {
                 let (tx, rx) = http::channel::new(scope.notifier());
                 *not = Some(tx);
-                rotor::Response::ok(ClientFsm::Connector(connector, rx))
+                rotor::Response::ok(ClientFsm::Connector(config.connector, rx))
             }).unwrap();
         }
 
@@ -75,6 +98,7 @@ impl<H: Send> Client<H> {
         let _handle = try!(thread::Builder::new().name("hyper-client".to_owned()).spawn(move || {
             loop_.run(Context {
                 queue: Vec::new(),
+                keep_alive: keep_alive,
                 _marker: PhantomData,
             }).unwrap()
         }));
@@ -108,6 +132,62 @@ impl<H: Send> Client<H> {
     }
 }
 
+/// Configuration for a Client
+#[derive(Debug, Clone)]
+pub struct Config<C> {
+    connector: C,
+    keep_alive: bool,
+    max_idle: usize,
+    max_sockets: usize,
+}
+
+impl<C> Config<C> where C: Connect + Send + 'static, C::Output: Send {
+    /// Set the `Connect` type to be used.
+    #[inline]
+    pub fn connector<CC: Connect>(self, val: CC) -> Config<CC> {
+        Config {
+            connector: val,
+            keep_alive: self.keep_alive,
+            max_idle: self.max_idle,
+            max_sockets: self.max_sockets,
+        }
+    }
+
+    /// Enable or disable keep-alive mechanics.
+    ///
+    /// Default is enabled.
+    #[inline]
+    pub fn keep_alive(mut self, val: bool) -> Config<C> {
+        self.keep_alive = val;
+        self
+    }
+
+    /// Set the max table size allocated for holding on to live sockets.
+    ///
+    /// Default is 1024.
+    #[inline]
+    pub fn max_sockets(mut self, val: usize) -> Config<C> {
+        self.max_sockets = val;
+        self
+    }
+
+    /// Construct the Client with this configuration.
+    #[inline]
+    pub fn build<H: Handler<C::Output>>(self) -> ::Result<Client<H>> {
+        Client::configured(self)
+    }
+}
+
+impl Default for Config<DefaultConnector> {
+    fn default() -> Config<DefaultConnector> {
+        Config {
+            connector: DefaultConnector::default(),
+            keep_alive: true,
+            max_idle: 5,
+            max_sockets: 1024,
+        }
+    }
+}
 
 /// An error that can occur when trying to queue a request.
 #[derive(Debug)]
@@ -216,6 +296,7 @@ impl<H: Handler<T>, T: Transport> http::MessageHandler<T> for Message<H, T> {
 
 struct Context<H: Handler<T>,T: Transport> {
     queue: Vec<(UrlParts, H)>,
+    keep_alive: bool,
     _marker: PhantomData<T>,
 }
 
@@ -255,7 +336,12 @@ where C: Connect,
 
     fn create(seed: Self::Seed, scope: &mut Scope<Self::Context>) -> rotor::Response<Self, rotor::Void> {
         rotor_try!(scope.register(&seed, EventSet::writable(), PollOpt::level()));
-        rotor::Response::ok(ClientFsm::Socket(http::Conn::new(seed, scope.notifier())))
+        rotor::Response::ok(
+            ClientFsm::Socket(
+                http::Conn::new(seed, scope.notifier())
+                    .keep_alive(scope.keep_alive)
+            )
+        )
     }
 
     fn ready(self, events: EventSet, scope: &mut Scope<Self::Context>) -> rotor::Response<Self, Self::Seed> {

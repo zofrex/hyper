@@ -12,7 +12,7 @@ use hyper::header::Connection;
 use hyper::{Decoder, Encoder, Next};
 use hyper::net::DefaultTransport as HttpStream;
 
-
+#[derive(Debug)]
 struct Dump(mpsc::Sender<()>);
 
 impl Drop for Dump {
@@ -70,9 +70,9 @@ fn main() {
 
     let (tx, rx) = mpsc::channel();
     let client = Client::new().expect("Failed to create a Client");
-    client.request(url.parse().unwrap(), Dump(tx));
+    client.request(url.parse().unwrap(), Dump(tx)).unwrap();
 
-    let mut i =-0;
+    let mut i = 0;
     loop {
         if let Ok(_) = rx.try_recv() {
             println!("\n\nDone.");
