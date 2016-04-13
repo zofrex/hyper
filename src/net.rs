@@ -6,7 +6,7 @@ use mio::tcp::{TcpStream, TcpListener};
 use mio::{Selector, Token, Evented, EventSet, PollOpt, TryAccept};
 
 #[cfg(feature = "openssl")]
-pub use self::openssl::Openssl;
+pub use self::openssl::{Openssl, OpensslStream};
 
 /// A trait representing a socket transport that can be used in a Client or Server.
 #[cfg(not(windows))]
@@ -487,6 +487,9 @@ mod openssl {
         }
     }
 
+    /// A wrapper around `openssl::SslStream`.
+    ///
+    /// Needed to implement `Evented` and `Writev` for this type.
     #[derive(Debug)]
     pub struct OpensslStream<T>(pub SslStream<T>);
 
