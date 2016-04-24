@@ -109,7 +109,7 @@
 //! implement `Write`.
 use std::fmt;
 use std::io::{self, ErrorKind, BufWriter, Write};
-use std::net::{SocketAddr, ToSocketAddrs};
+use std::net::{SocketAddr, ToSocketAddrs, TcpListener};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -211,6 +211,10 @@ impl Server<HttpListener> {
     /// Creates a new server that will handle `HttpStream`s.
     pub fn http<To: ToSocketAddrs>(addr: To) -> ::Result<Server<HttpListener>> {
         HttpListener::new(addr).map(Server::new)
+    }
+
+    pub fn http_on_listener(listener: TcpListener) -> Server<HttpListener> {
+        Server::new(HttpListener::from(listener))
     }
 }
 
